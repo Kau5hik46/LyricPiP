@@ -5,6 +5,7 @@ Location:
   Linux   : ~/.config/LyricPiP/config.json
 Unknown keys are ignored, so old/new versions can share a file.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,10 @@ import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from dotenv import load_dotenv
 from platformdirs import user_config_dir
+
+load_dotenv()
 
 log = logging.getLogger(__name__)
 CONFIG_PATH = Path(user_config_dir("LyricPiP", appauthor=False)) / "config.json"
@@ -25,16 +29,19 @@ class Config:
     # win over later ones; un-synced (plain) text is only used as a fallback.
     # Available: lrclib, netease, kugou, ovh, genius, lyricstranslate (stub)
     providers: list[str] = field(
-        default_factory=lambda: ["lrclib", "netease", "kugou", "ovh", "genius"])
-    genius_token: str = ""          # or set env var GENIUS_TOKEN
-    request_timeout: float = 6.0    # seconds per HTTP request
+        default_factory=lambda: ["lrclib", "netease", "kugou", "ovh", "genius"]
+    )
+    genius_token: str = ""  # or set env var GENIUS_TOKEN
+    request_timeout: float = 6.0  # seconds per HTTP request
 
     # Appearance / behaviour
     font_size: int = 22
-    bg_alpha: int = 150             # 0-255 opacity of the dark background
+    bg_alpha: int = 150  # 0-255 opacity of the dark background
     show_romanization: bool = True
-    offset: float = 0.0             # seconds; + shows lyrics earlier, - later
-    ignore_players: list[str] = field(default_factory=list)  # substrings, e.g. ["chrome"]
+    offset: float = 0.0  # seconds; + shows lyrics earlier, - later
+    ignore_players: list[str] = field(
+        default_factory=list
+    )  # substrings, e.g. ["chrome"]
 
     # Window geometry (remembered between runs)
     x: int | None = None
