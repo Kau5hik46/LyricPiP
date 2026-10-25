@@ -1,4 +1,5 @@
 """Provider registry. Order in config.json -> priority."""
+
 from __future__ import annotations
 
 import logging
@@ -13,9 +14,19 @@ from .netease import NeteaseProvider
 from .ovh import OvhProvider
 
 REGISTRY: dict[str, type[Provider]] = {
-    p.name: p for p in (LrclibProvider, NeteaseProvider, KugouProvider,
-                        OvhProvider, GeniusProvider, LyricsTranslateProvider)
+    p.name: p
+    for p in (
+        LrclibProvider,
+        NeteaseProvider,
+        KugouProvider,
+        OvhProvider,
+        GeniusProvider,
+        LyricsTranslateProvider,
+    )
 }
+
+# Display + priority order used by the UI dropdown. Earlier = higher priority.
+ALL_PROVIDERS = ["lrclib", "netease", "kugou", "ovh", "genius", "lyricstranslate"]
 
 
 def build_providers(cfg: Config) -> list[Provider]:

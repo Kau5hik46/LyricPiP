@@ -1,4 +1,5 @@
 """Orchestrates: cache -> providers (in parallel) -> parsing -> romanization."""
+
 from __future__ import annotations
 
 import logging
@@ -21,6 +22,11 @@ class LyricsManager:
         self.cache = LyricsCache()
         self.providers = build_providers(cfg)
 
+    def reload_providers(self) -> None:
+        """Rebuild the provider list from cfg.providers (called after the user toggles sources).
+        Swapping the list reference is atomic, so a lookup already in flight is unaffected."""
+        self.providers = build_providers(self.cfg)
+
     def invalidate(self, track: TrackInfo) -> None:
         self.cache.delete(track.key)
 
@@ -32,7 +38,7 @@ class LyricsManager:
             for variant in query_variants(track):
                 result = self._choose(self._query_all(variant))
                 if result:
-                    self.cache.save(track.key, result)   # cache BEFORE romanizing
+                    self.cache.save(track.key, result)  # cache BEFORE romanizing
                     break
         if result:
             romanize_lines(result.lines)
@@ -42,7 +48,9 @@ class LyricsManager:
     def _query_all(self, track: TrackInfo) -> list[RawLyrics]:
         """Ask every provider at once; return answers in priority order."""
         ex = ThreadPoolExecutor(max_workers=max(1, len(self.providers)))
-        futures = {ex.submit(p.safe_fetch, track): i for i, p in enumerate(self.providers)}
+        futures = {
+            ex.submit(p.safe_fetch, track): i for i, p in enumerate(self.providers)
+        }
         answers: list[tuple[int, RawLyrics]] = []
         try:
             for fut in as_completed(futures, timeout=20):

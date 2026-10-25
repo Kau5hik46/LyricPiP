@@ -10,6 +10,7 @@ PiP behaviour
 Threading: the UI thread never blocks. Lyric lookups run in a worker thread and
 come back through the `lyrics_loaded` signal.
 """
+
 from __future__ import annotations
 
 import bisect
@@ -24,20 +25,32 @@ from PySide6.QtWidgets import QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
 
 from ..config import Config
 from ..lyrics.manager import LyricsManager
+from ..lyrics.providers import ALL_PROVIDERS
 from ..media.base import MediaWatcher
 from ..models import LyricLine, LyricsResult, TrackInfo
 
 log = logging.getLogger(__name__)
 
-EDGE = 8                       # px of the border that acts as a resize handle
+SOURCE_LABELS = {
+    "lrclib": "LRCLIB (synced)",
+    "netease": "NetEase (synced)",
+    "kugou": "KuGou (synced)",
+    "ovh": "lyrics.ovh (plain)",
+    "genius": "Genius (plain, needs token)",
+    "lyricstranslate": "LyricsTranslate (stub)",
+}
+
+EDGE = 8  # px of the border that acts as a resize handle
 COL_CURRENT, COL_OTHER = "#FFFFFF", "#9AA4AF"
 COL_ROMA_CURRENT, COL_ROMA_OTHER = "#7FD6FF", "#5F8FA8"
 
 
 class Overlay(QWidget):
-    lyrics_loaded = Signal(str, object)     # (track.key, LyricsResult | None)
+    lyrics_loaded = Signal(str, object)  # (track.key, LyricsResult | None)
 
-    def __init__(self, cfg: Config, watcher: MediaWatcher, manager: LyricsManager) -> None:
+    def __init__(
+        self, cfg: Config, watcher: MediaWatcher, manager: LyricsManager
+    ) -> None:
         super().__init__()
         self.cfg, self.watcher, self.manager = cfg, watcher, manager
 
@@ -46,12 +59,14 @@ class Overlay(QWidget):
         self._lyrics: LyricsResult | None = None
         self._times: list[float] = []
         self._status = "Nothing playing"
-        self._scroll = 0                    # first-line index for unsynced lyrics
-        self._last_render = None            # avoid re-rendering identical frames
+        self._scroll = 0  # first-line index for unsynced lyrics
+        self._last_render = None  # avoid re-rendering identical frames
 
         # --- window flags -------------------------------------------------
         self.setWindowTitle("LyricPiP")
-        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setWindowFlags(
+            Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setMinimumSize(240, 90)
@@ -80,7 +95,7 @@ class Overlay(QWidget):
         self.lyrics_loaded.connect(self._on_lyrics_loaded)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(100)              # 10 Hz is plenty for line changes
+        self._timer.start(100)  # 10 Hz is plenty for line changes
 
     # ======================================================================
     # Main loop
@@ -112,17 +127,26 @@ class Overlay(QWidget):
         self._status = "Searching lyrics…"
         threading.Thread(target=self._fetch_worker, args=(track,), daemon=True).start()
 
-    def _fetch_worker(self, track: TrackInfo) -> None:        # worker thread!
+    def _toggle_provider(self, name: str, on: bool) -> None:
+        enabled = set(self.cfg.providers)
+        enabled.add(name) if on else enabled.discard(name)
+        # Keep the canonical priority order regardless of click order.
+        self.cfg.providers = [p for p in ALL_PROVIDERS if p in enabled]
+        self.cfg.save()  # persisted in config.json
+        self.manager.reload_providers()  # new lookups use the new list
+        self._refetch()  # drop the cached result and search again for the current song
+
+    def _fetch_worker(self, track: TrackInfo) -> None:  # worker thread!
         try:
             res = self.manager.get(track)
         except Exception:
             log.exception("lyrics lookup crashed")
             res = None
-        self.lyrics_loaded.emit(track.key, res)               # queued to UI thread
+        self.lyrics_loaded.emit(track.key, res)  # queued to UI thread
 
     def _on_lyrics_loaded(self, key: str, res: LyricsResult | None) -> None:
         if not self._track or key != self._track.key:
-            return                                            # user already skipped on
+            return  # user already skipped on
         self._lyrics = res
         self._times = [l.time for l in res.lines] if res else []
         self._status = "" if res else "No lyrics found"
@@ -137,17 +161,28 @@ class Overlay(QWidget):
         color = COL_CURRENT if current else COL_OTHER
         weight = "bold" if current else "normal"
         text = html.escape(line.text) or "♪"
-        out = (f'<div style="color:{color};font-size:{size}px;font-weight:{weight};'
-               f'margin-top:4px;">{text}</div>')
+        out = (
+            f'<div style="color:{color};font-size:{size}px;font-weight:{weight};'
+            f'margin-top:4px;">{text}</div>'
+        )
         if self.cfg.show_romanization and line.romaji:
             rc = COL_ROMA_CURRENT if current else COL_ROMA_OTHER
-            out += (f'<div style="color:{rc};font-size:{round(fs * 0.8)}px;">'
-                    f'{html.escape(line.romaji)}</div>')
+            out += (
+                f'<div style="color:{rc};font-size:{round(fs * 0.8)}px;">'
+                f"{html.escape(line.romaji)}</div>"
+            )
         return out
 
     def _render(self, idx: int | None) -> None:
-        sig = (idx, self._status, self.cfg.font_size, self.cfg.show_romanization,
-               self.body.height(), id(self._lyrics), self._track.key if self._track else "")
+        sig = (
+            idx,
+            self._status,
+            self.cfg.font_size,
+            self.cfg.show_romanization,
+            self.body.height(),
+            id(self._lyrics),
+            self._track.key if self._track else "",
+        )
         if sig == self._last_render:
             return
         self._last_render = sig
@@ -155,26 +190,42 @@ class Overlay(QWidget):
         # Header: song + provider
         if self._track:
             src = f"  ·  {self._lyrics.provider}" if self._lyrics else ""
-            sync = "" if (self._lyrics is None or self._lyrics.synced) else "  ·  unsynced (scroll)"
-            self.header.setText(f"{self._track.title} — {self._track.artist}{src}{sync}")
+            sync = (
+                ""
+                if (self._lyrics is None or self._lyrics.synced)
+                else "  ·  unsynced (scroll)"
+            )
+            self.header.setText(
+                f"{self._track.title} — {self._track.artist}{src}{sync}"
+            )
         else:
             self.header.setText("LyricPiP")
 
         if self._lyrics is None or idx is None:
-            self.body.setText(f'<div style="color:{COL_OTHER};font-size:{self.cfg.font_size}px;">'
-                              f'{html.escape(self._status)}</div>')
+            self.body.setText(
+                f'<div style="color:{COL_OTHER};font-size:{self.cfg.font_size}px;">'
+                f"{html.escape(self._status)}</div>"
+            )
             return
 
         # How many lines fit? Estimate a slot height per line, keep current line high-ish.
         fs = self.cfg.font_size
         slot = fs * 1.5 + 6 + (fs * 1.1 if self.cfg.show_romanization else 0)
         n = max(1, int(self.body.height() / slot))
-        before = 0 if n == 1 else (n // 2 if n <= 3 else n // 3) if self._lyrics.synced else 0
+        before = (
+            0
+            if n == 1
+            else (n // 2 if n <= 3 else n // 3)
+            if self._lyrics.synced
+            else 0
+        )
         lines = self._lyrics.lines
         start = max(0, min(idx - before, len(lines) - 1))
-        shown = lines[start:start + n]
-        parts = [self._line_html(l, self._lyrics.synced and (start + i == idx))
-                 for i, l in enumerate(shown)]
+        shown = lines[start : start + n]
+        parts = [
+            self._line_html(l, self._lyrics.synced and (start + i == idx))
+            for i, l in enumerate(shown)
+        ]
         self.body.setText("".join(parts))
 
     def paintEvent(self, _event) -> None:
@@ -203,10 +254,14 @@ class Overlay(QWidget):
 
     def mouseMoveEvent(self, ev) -> None:
         e, E = self._edges_at(ev.position().toPoint()), Qt.Edge
-        has = lambda x: bool(e & x)                                   # noqa: E731
-        if (has(E.LeftEdge) and has(E.TopEdge)) or (has(E.RightEdge) and has(E.BottomEdge)):
+        has = lambda x: bool(e & x)  # noqa: E731
+        if (has(E.LeftEdge) and has(E.TopEdge)) or (
+            has(E.RightEdge) and has(E.BottomEdge)
+        ):
             self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-        elif (has(E.RightEdge) and has(E.TopEdge)) or (has(E.LeftEdge) and has(E.BottomEdge)):
+        elif (has(E.RightEdge) and has(E.TopEdge)) or (
+            has(E.LeftEdge) and has(E.BottomEdge)
+        ):
             self.setCursor(Qt.CursorShape.SizeBDiagCursor)
         elif has(E.LeftEdge) or has(E.RightEdge):
             self.setCursor(Qt.CursorShape.SizeHorCursor)
@@ -233,7 +288,9 @@ class Overlay(QWidget):
         if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._set_font(self.cfg.font_size + step * 2)
         elif self._lyrics and not self._lyrics.synced:
-            self._scroll = max(0, min(self._scroll - step * 2, len(self._lyrics.lines) - 1))
+            self._scroll = max(
+                0, min(self._scroll - step * 2, len(self._lyrics.lines) - 1)
+            )
 
     def keyPressEvent(self, ev) -> None:
         if ev.key() == Qt.Key.Key_BracketRight:
@@ -251,17 +308,31 @@ class Overlay(QWidget):
         a.setChecked(self.cfg.show_romanization)
         a.triggered.connect(self._toggle_roma)
 
-        m.addAction("Font larger (Ctrl+wheel)", lambda: self._set_font(self.cfg.font_size + 2))
+        m.addAction(
+            "Font larger (Ctrl+wheel)", lambda: self._set_font(self.cfg.font_size + 2)
+        )
         m.addAction("Font smaller", lambda: self._set_font(self.cfg.font_size - 2))
 
         bg = m.addMenu("Background opacity")
-        for label, alpha in (("Almost clear", 40), ("Light", 90), ("Medium", 150), ("Solid", 225)):
+        for label, alpha in (
+            ("Almost clear", 40),
+            ("Light", 90),
+            ("Medium", 150),
+            ("Solid", 225),
+        ):
             bg.addAction(label, lambda al=alpha: self._set_alpha(al))
 
         t = m.addMenu(f"Lyric timing ({self.cfg.offset:+.1f}s)")
         t.addAction("Show lyrics sooner  ]", lambda: self._shift_offset(+0.5))
         t.addAction("Show lyrics later   [", lambda: self._shift_offset(-0.5))
         t.addAction("Reset", lambda: self._shift_offset(None))
+
+        src = m.addMenu("Lyric sources")
+        for name in ALL_PROVIDERS:
+            act = src.addAction(SOURCE_LABELS.get(name, name))
+            act.setCheckable(True)
+            act.setChecked(name in self.cfg.providers)
+            act.triggered.connect(lambda on, n=name: self._toggle_provider(n, on))
 
         m.addAction("Re-fetch lyrics", self._refetch)
         m.addSeparator()
@@ -292,7 +363,12 @@ class Overlay(QWidget):
 
     def _save_geometry(self) -> None:
         g = self.geometry()
-        self.cfg.x, self.cfg.y, self.cfg.width, self.cfg.height = g.x(), g.y(), g.width(), g.height()
+        self.cfg.x, self.cfg.y, self.cfg.width, self.cfg.height = (
+            g.x(),
+            g.y(),
+            g.width(),
+            g.height(),
+        )
         self.cfg.save()
 
     def closeEvent(self, ev) -> None:
