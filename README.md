@@ -171,6 +171,7 @@ python -m unittest discover -s tests -v
 pip install pyinstaller
 pyinstaller --noconfirm --windowed --name LyricPiP --collect-all pykakasi --collect-all pypinyin lyricpip/__main__.py
 ```
+
 (For Windows also add `--collect-all winrt`-style flags if modules are reported missing.)
 
 ## 10. Roadmap
