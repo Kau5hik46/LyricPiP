@@ -21,13 +21,22 @@ from functools import reduce
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QLabel, QMenu, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ..config import Config
 from ..lyrics.manager import LyricsManager
 from ..lyrics.providers import ALL_PROVIDERS
 from ..media.base import MediaWatcher
 from ..models import LyricLine, LyricsResult, TrackInfo
+from ..textutil import clean_artist, clean_title
+from .search_dialog import ManualSearchDialog
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +56,9 @@ COL_ROMA_CURRENT, COL_ROMA_OTHER = "#7FD6FF", "#5F8FA8"
 
 class Overlay(QWidget):
     lyrics_loaded = Signal(str, object)  # (track.key, LyricsResult | None)
+    manual_loaded = Signal(
+        str, str, object
+    )  # (playing track.key, query label, result | None)
 
     def __init__(
         self, cfg: Config, watcher: MediaWatcher, manager: LyricsManager
@@ -93,6 +105,7 @@ class Overlay(QWidget):
 
         # --- wiring -------------------------------------------------------
         self.lyrics_loaded.connect(self._on_lyrics_loaded)
+        self.manual_loaded.connect(self._on_manual_loaded)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.start(100)  # 10 Hz is plenty for line changes
@@ -297,6 +310,11 @@ class Overlay(QWidget):
             self._shift_offset(+0.5)
         elif ev.key() == Qt.Key.Key_BracketLeft:
             self._shift_offset(-0.5)
+        elif (
+            ev.key() == Qt.Key.Key_F
+            and ev.modifiers() & Qt.KeyboardModifier.ControlModifier
+        ):
+            self._manual_search()
 
     # ======================================================================
     # Context menu & settings
@@ -355,6 +373,58 @@ class Overlay(QWidget):
     def _shift_offset(self, delta: float | None) -> None:
         self.cfg.offset = 0.0 if delta is None else round(self.cfg.offset + delta, 2)
         self.cfg.save()
+
+    # ----------------------------------------------------------------------
+    # Manual search: the QUERY comes from the user, the TIMING still comes from
+    # the player (self.watcher), so lyrics stay in sync with what is playing.
+    # ----------------------------------------------------------------------
+    def _manual_search(self) -> None:
+        playing = self._track
+        if playing is None:
+            QMessageBox.information(
+                self,
+                "LyricPiP",
+                "Start playing a song first, so the lyrics can be synced to it.",
+            )
+            return
+        dlg = ManualSearchDialog(
+            self, clean_title(playing.title), clean_artist(playing.artist)
+        )
+        if dlg.exec() != ManualSearchDialog.DialogCode.Accepted:
+            return
+        title, artist = dlg.values()
+        # Reuse the playing song's duration: it improves matching (picks the right
+        # version) without the user having to type it.
+        query = TrackInfo(
+            title, artist, duration=playing.duration, player=playing.player
+        )
+        threading.Thread(
+            target=self._manual_worker, args=(playing, query), daemon=True
+        ).start()
+
+    def _manual_worker(
+        self, playing: TrackInfo, query: TrackInfo
+    ) -> None:  # worker thread!
+        try:
+            res = self.manager.get(query, cache_key=playing.key, use_cache=False)
+        except Exception:
+            log.exception("manual lyrics lookup crashed")
+            res = None
+        label = f"{query.title} — {query.artist}" if query.artist else query.title
+        self.manual_loaded.emit(playing.key, label, res)
+
+    def _on_manual_loaded(self, key: str, label: str, res: LyricsResult | None) -> None:
+        if res is None:
+            QMessageBox.information(
+                self,
+                "LyricPiP",
+                f"No lyrics found for “{label}”.\nThe current lyrics were kept.",
+            )
+            return
+        if self._track and key == self._track.key:  # ignore if the song already changed
+            self._lyrics = res
+            self._times = [l.time for l in res.lines]
+            self._status, self._scroll, self._last_render = "", 0, None
 
     def _refetch(self) -> None:
         if self._track:
