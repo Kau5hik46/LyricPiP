@@ -19,7 +19,7 @@ under non-Latin lines.
 ## 1. Tech stack (and why)
 
 | Layer | Choice | Why |
-|---|---|---|
+| --- | --- | --- |
 | Language | Python 3.10+ | Best romanization libraries, fast iteration |
 | GUI | PySide6 (Qt 6) | Frameless/translucent/always-on-top windows on Windows + Linux; OS-native move/resize |
 | Now-playing (Windows) | SMTC via `winrt-*` packages | One API covers Spotify, browsers, VLC, Apple Music… |
@@ -29,7 +29,7 @@ under non-Latin lines.
 
 ## 2. Architecture
 
-```
+```text
  OS media API ──► MediaWatcher thread ──► PlaybackState (title, artist, position…)
  (SMTC/MPRIS)                                   │ polled 10×/s
                                                 ▼
@@ -39,7 +39,7 @@ under non-Latin lines.
                                      LRCLIB · NetEase · KuGou · lyrics.ovh · Genius · (LyricsTranslate stub)
 ```
 
-```
+```text
 lyricpip/
   app.py              entry point (wiring)
   config.py           JSON settings
@@ -68,12 +68,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 python -m lyricpip
 ```
+
 Shortcut: `./run.sh` does the venv + install + launch for you.
 
 ### Windows 10/11
 
 1. Install Python 3.10+ from python.org (tick **Add python.exe to PATH**).
 2. In PowerShell:
+
 ```powershell
 cd LyricPiP
 py -3 -m venv .venv
@@ -81,16 +83,18 @@ py -3 -m venv .venv
 pip install -r requirements.txt
 python -m lyricpip
 ```
+
 Shortcut: double-click `run.bat`.
 
 ### Try it
+
 Start playing something (Spotify, or a YouTube Music tab in Firefox/Chrome), then launch the app.
 The window shows *Searching lyrics…* and then the synced lyrics.
 
 ## 4. Using it
 
 | Action | How |
-|---|---|
+| --- | --- |
 | Move | Drag the window body |
 | Resize | Drag any edge or corner |
 | Settings menu | Right-click |
@@ -107,6 +111,7 @@ Settings and window position are saved to
 Lyrics are cached in `~/.cache/LyricPiP/lyrics/` (Linux) / `%LOCALAPPDATA%\LyricPiP\Cache\lyrics\` (Windows).
 
 ### config.json options
+
 ```json
 {
   "providers": ["lrclib", "netease", "kugou", "ovh", "genius"],
@@ -118,12 +123,13 @@ Lyrics are cached in `~/.cache/LyricPiP/lyrics/` (Linux) / `%LOCALAPPDATA%\Lyric
   "offset": 0.0
 }
 ```
+
 `providers` order is the priority order. Synced lyrics from any provider always beat plain text.
 
 ## 5. Lyric sources
 
 | Provider | Type | Key needed | Notes |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | LRCLIB | synced + plain | no | Best open source; first choice |
 | NetEase | synced | no | Great for C/J/K-pop; unofficial endpoints, may be rate/geo limited |
 | KuGou | synced | no | Unofficial endpoints, 3-step flow |
@@ -154,11 +160,13 @@ Add a source: copy `lyrics/providers/ovh.py`, implement `fetch`, register it in 
 * **Logs** – run from a terminal; each provider logs `hit` / `miss` / `failed`.
 
 ## 8. Tests
+
 ```bash
 python -m unittest discover -s tests -v
 ```
 
 ## 9. Packaging (optional)
+
 ```bash
 pip install pyinstaller
 pyinstaller --noconfirm --windowed --name LyricPiP --collect-all pykakasi --collect-all pypinyin lyricpip/__main__.py
@@ -166,13 +174,14 @@ pyinstaller --noconfirm --windowed --name LyricPiP --collect-all pykakasi --coll
 (For Windows also add `--collect-all winrt`-style flags if modules are reported missing.)
 
 ## 10. Roadmap
+
 * System-tray icon, global hotkeys, click-through "lock" mode
 * Karaoke word-level highlighting (enhanced LRC / NetEase `yrc`)
 * Translation line (NetEase `tlyric`), manual lyric search dialog
 * Push-based Linux D-Bus listener (`dbus-next`) instead of polling
-* macOS support (MediaRemote)
 
 ## 11. Legal
+
 Lyrics are copyrighted. This tool fetches them on demand for personal display and caches them locally;
 it does not redistribute them. NetEase/KuGou endpoints are unofficial and may change or violate their
 terms — use at your own discretion and keep request rates low.
