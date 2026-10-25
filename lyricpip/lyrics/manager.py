@@ -30,15 +30,25 @@ class LyricsManager:
     def invalidate(self, track: TrackInfo) -> None:
         self.cache.delete(track.key)
 
-    def get(self, track: TrackInfo) -> LyricsResult | None:
-        """Blocking - call from a worker thread, never from the UI thread."""
-        result = self.cache.load(track.key)
+    def get(
+        self, track: TrackInfo, *, cache_key: str | None = None, use_cache: bool = True
+    ) -> LyricsResult | None:
+        """Blocking - call from a worker thread, never from the UI thread.
+
+        Manual search: pass the user's typed query as `track`, the song that is
+        actually PLAYING as `cache_key` (its `.key`), and `use_cache=False`.
+        The result is then stored under the playing song, so it is reused the next
+        time that song plays, while the query itself can differ from the player's
+        (often messy) metadata.
+        """
+        key = cache_key or track.key
+        result = self.cache.load(key) if use_cache else None
         if result is None:
             # Try the raw metadata first, then cleaned/split variants.
             for variant in query_variants(track):
                 result = self._choose(self._query_all(variant))
                 if result:
-                    self.cache.save(track.key, result)  # cache BEFORE romanizing
+                    self.cache.save(key, result)  # cache BEFORE romanizing
                     break
         if result:
             romanize_lines(result.lines)
