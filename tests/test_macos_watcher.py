@@ -2,12 +2,19 @@
 
 import json
 import pathlib
+import subprocess
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from lyricpip.media.macos_applescript import parse_players
+from lyricpip.media.macos_applescript import MacOSAppleScriptWatcher, parse_players
+
+LOGGER = "lyricpip.media.macos_applescript"
+OSASCRIPT_RUN = "lyricpip.media.macos_applescript.subprocess.run"
+AUTOMATION_DENIED_STDERR = ("execution error: Error: Error: Not authorized to send "
+                            "Apple events to Spotify. (-1743)")
 
 # Real script output captured from Music.app (durations in seconds).
 MUSIC = {"player": "Music", "state": "paused", "title": "Bad Luck", "artist": "Adam Jensen",
@@ -71,6 +78,61 @@ class ParsePlayersTests(unittest.TestCase):
         with self.assertLogs("lyricpip.media.macos_applescript", "WARNING"):
             state = parse_players("execution error", nothing_ignored)
         self.assertIsNone(state.track)
+
+
+def osascript_exit(code: int, stderr: str) -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(code, ["osascript"], output="", stderr=stderr)
+
+
+class WatcherPollTests(unittest.TestCase):
+    def setUp(self):
+        self.watcher = MacOSAppleScriptWatcher()
+
+    def test_script_output_is_parsed(self):
+        finished = subprocess.CompletedProcess(["osascript"], 0, json.dumps([MUSIC]), "")
+        with mock.patch(OSASCRIPT_RUN, return_value=finished):
+            self.assertEqual(self.watcher._poll().track.title, "Bad Luck")
+
+    def test_missing_osascript_gives_empty_state_and_logs(self):
+        with mock.patch(OSASCRIPT_RUN, side_effect=FileNotFoundError), self.assertLogs(LOGGER):
+            state = self.watcher._poll()
+        self.assertIsNone(state.track)
+
+    def test_timeout_gives_empty_state_and_logs(self):
+        timeout = subprocess.TimeoutExpired(["osascript"], 3)
+        with mock.patch(OSASCRIPT_RUN, side_effect=timeout), self.assertLogs(LOGGER):
+            state = self.watcher._poll()
+        self.assertIsNone(state.track)
+
+    def test_script_error_gives_empty_state_and_logs_stderr(self):
+        failure = osascript_exit(1, "execution error: Error: boom (-2700)")
+        with mock.patch(OSASCRIPT_RUN, side_effect=failure), self.assertLogs(LOGGER) as logs:
+            state = self.watcher._poll()
+        self.assertIsNone(state.track)
+        self.assertIn("boom", logs.output[0])
+
+    def test_automation_denied_logs_settings_hint_once(self):
+        denied = osascript_exit(1, AUTOMATION_DENIED_STDERR)
+        with mock.patch(OSASCRIPT_RUN, side_effect=denied), self.assertLogs(LOGGER) as logs:
+            self.watcher._poll()
+            self.watcher._poll()
+        self.assertEqual(len(logs.output), 1)
+        self.assertIn("Privacy & Security", logs.output[0])
+
+
+class WatcherLoopTests(unittest.TestCase):
+    def test_failed_poll_replaces_stale_track_with_empty_state(self):
+        watcher = MacOSAppleScriptWatcher()
+        watcher._publish(parse(SPOTIFY))
+
+        def fail_and_stop():
+            watcher.stop()
+            raise RuntimeError("unexpected")
+
+        with mock.patch.object(watcher, "_poll", side_effect=fail_and_stop), \
+                self.assertLogs(LOGGER):
+            watcher.run()
+        self.assertIsNone(watcher.get_state().track)
 
 
 if __name__ == "__main__":
