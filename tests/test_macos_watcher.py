@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
+from lyricpip.media import create_watcher
 from lyricpip.media.macos_applescript import MacOSAppleScriptWatcher, parse_players
 
 LOGGER = "lyricpip.media.macos_applescript"
@@ -133,6 +134,19 @@ class WatcherLoopTests(unittest.TestCase):
                 self.assertLogs(LOGGER):
             watcher.run()
         self.assertIsNone(watcher.get_state().track)
+
+
+class WatcherFactoryTests(unittest.TestCase):
+    def test_darwin_gets_applescript_watcher_polling_every_second(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            watcher = create_watcher()
+        self.assertIsInstance(watcher, MacOSAppleScriptWatcher)
+        self.assertEqual(watcher.interval, 1.0)
+
+    def test_unsupported_platform_error_lists_supported_systems(self):
+        with mock.patch.object(sys, "platform", "sunos5"), \
+                self.assertRaisesRegex(RuntimeError, "Windows, Linux and macOS"):
+            create_watcher()
 
 
 if __name__ == "__main__":
